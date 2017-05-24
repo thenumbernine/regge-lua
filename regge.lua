@@ -306,6 +306,8 @@ function App:init()
 	local sb = makeslice(1)
 	fuseslices(sa,sb)
 	-- 1) pick a random external edge (with only one triangle)
+	local openedges = edges:filter(function(edge) return #edge.tris == 1 end)
+	print(#openedges)
 --]==]
 --[==[
 	for i=1,20 do
