@@ -19,41 +19,16 @@ local edges = table()
 local tris = table()
 local tets = table()
 
-local Triangle = class()
+local Vertex = class()
 
-function Triangle:init(a,b,c)
-	self[1] = a
-	self[2] = b
-	self[3] = c
+function Vertex:init(args)
+	for k,v in pairs(args) do self[k] = v end 
+	self.edges = table()
+	self.tris = table()
 end
 
-function Triangle:angleForVertex(v)
-	local a,b,c = table.unpack(self)
-	local va,vb,vc = vtxs[a], vtxs[b], vtxs[c]
-	local ab = (vb - va):normalize()
-	local ac = (vc - va):normalize()
-	local bc = (vc - vb):normalize()
-	if v == a then return math.acos(ab:dot(ac)) end
-	if v == b then return math.acos(-ab:dot(bc)) end
-	if v == c then return math.acos(ac:dot(bc)) end
-end
-
-function Triangle:getvtxs(i)
-	local a,b,c = table.unpack(self)
-	if i == a then return a, b, c end
-	if i == b then return b, c, a end
-	if i == c then return c, a, b end
-end
-
-local Vtx = class(vec4)
-
-function Vtx:init(t, i)
-	for k,v in pairs(t) do self[k] = v end
-	self.i = i
-end
-
-function Vtx:neighborTris()
-	local i = self.i
+function Vertex:neighborTris()
+	local i = self.index
 	local tvs = table()
 	for _,t in ipairs(tris) do
 		if table.find(t, i) then
@@ -63,8 +38,8 @@ function Vtx:neighborTris()
 	return tvs
 end
 
-function Vtx:totalAngle()
-	local i = self.i
+function Vertex:totalAngle()
+	local i = self.index
 	-- tvs is all triangles that hold vertex i
 	local tvs = self:neighborTris()
 	local theta = 0
@@ -74,54 +49,103 @@ function Vtx:totalAngle()
 	return theta
 end
 
-function Vtx:curvature()
+function Vertex:curvature()
 	return 2 * math.pi - self:totalAngle()
+end
+
+function Vertex.__lt(a,b) return tostring(a) < tostring(b) end
+
+function Vertex.__eq(a,b)
+	return a.pos == b.pos 
+end
+
+local Edge = class()
+
+function Edge:init(...)
+	self.vtxs = table{...}
+	self.tris = table()
+end
+
+local Triangle = class()
+
+function Triangle:init(...)
+	self.vtxs = table{...}
+	self.edges = table()
+end
+
+function Triangle:angleForVertex(v)
+	local a,b,c = self.vtxs:unpack()
+	local ab = (b.pos - a.pos):normalize()
+	local ac = (c.pos - a.pos):normalize()
+	local bc = (c.pos - b.pos):normalize()
+	if v == a then return math.acos(ab:dot(ac)) end
+	if v == b then return math.acos(-ab:dot(bc)) end
+	if v == c then return math.acos(ac:dot(bc)) end
+end
+
+function Triangle:getvtxs(i)
+	local a,b,c = self.vtxs:unpack()
+	if i == a then return a, b, c end
+	if i == b then return b, c, a end
+	if i == c then return c, a, b end
 end
 
 local function makevtx(x,y,z,t)
 	for i,v in ipairs(vtxs) do
-		if v[1] == x 
-		and v[2] == y 
-		and v[3] == z 
-		and v[4] == t
+		if v.pos[1] == x 
+		and v.pos[2] == y 
+		and v.pos[3] == z 
+		and v.pos[4] == t
 		then 
-			return i 
+			return v
 		end
 	end
-	vtxs:insert(Vtx({x,y,z,t}, #vtxs+1))
-	return #vtxs
+	local v = Vertex{pos=vec4(x,y,z,t), index=#vtxs+1}
+	vtxs:insert(v)
+	return v
 end
 
 local function makeedge(a,b)
 	for i,e in ipairs(edges) do
-		if (e[1] == a and e[2] == b)
-		or (e[2] == a and e[1] == b)
-		then return i end
+		if (e.vtxs[1] == a and e.vtxs[2] == b)
+		or (e.vtxs[2] == a and e.vtxs[1] == b)
+		then return e end
 	end
-	edges:insert{a,b}
-	return #edges
+	local e = Edge(a,b)
+	edges:insert(e)
+	a.edges:insert(e)
+	b.edges:insert(e)
+	return e
 end
 
 local function maketri(a,b,c, args)
-	local tri = Triangle(a,b,c)
+	local tri = {a,b,c}
 	table.sort(tri)
+	for i,t in ipairs(tris) do
+		if t.vtxs[1] == tri[1] 
+		and t.vtxs[2] == tri[2] 
+		and t.vtxs[3] == tri[3] 
+		then
+			return t
+		end
+	end
+	
+	tri = Triangle(table.unpack(tri))
 	if args then
 		for k,v in pairs(args) do
 			tri[k] = v
 		end
 	end
-	for i,t in ipairs(tris) do
-		if t[1] == tri[1] and t[2] == tri[2] and t[3] == tri[3] then
-			return i
-		end
-	end
 	tris:insert(tri)
 	
-	makeedge(a,b)
-	makeedge(a,c)
-	makeedge(b,c)
-	
-	return #tris
+	tri.edges:insert(makeedge(a,b))
+	tri.edges:insert(makeedge(a,c))
+	tri.edges:insert(makeedge(b,c))
+	for _,e in ipairs(tri.edges) do
+		e.tris:insert(tri)
+	end
+
+	return tri
 end
 
 local function maketet(a,b,c,d)
@@ -232,7 +256,7 @@ function App:init()
 
 	local slices = table()
 		
-	local slicesize = 50
+	local slicesize = 5
 	local radius = slicesize / (2 * math.pi)
 
 	local function vtxpos(i,z,dr)
@@ -252,28 +276,38 @@ function App:init()
 	end
 
 	local function fuseslices(slice, slice2)
+		local ta = table()
+		local tb = table()
 		for i=1,#slice do
 			local a,b = slice[i], slice[i%slicesize+1]
 			local x,y = slice2[i], slice2[i%slicesize+1]
 			if a and x and y then
-				maketri(y,x,a, {color={1,0,0}})
+				tb:insert(maketri(y,x,a, {color={1,0,0}}))
 			end
 			if a and b and y then
-				maketri(a,b,y, {color={0,1,1}})
+				ta:insert(maketri(a,b,y, {color={0,1,1}}))
 			end
 		end
+		return ta, tb
 	end
 
 	local function findedge(a,b)
 		for _,e in ipairs(edges) do
-			if (e[1] == a and e[2] == b)
-			or (e[1] == b and e[2] == a)
+			if (e.vtxs[1] == a and e.vtxs[2] == b)
+			or (e.vtxs[1] == b and e.vtxs[2] == a)
 			then
 				return true
 			end
 		end
 	end
 
+-- [==[
+	local sa = makeslice(0)
+	local sb = makeslice(1)
+	fuseslices(sa,sb)
+	-- 1) pick a random external edge (with only one triangle)
+--]==]
+--[==[
 	for i=1,20 do
 		slices:insert(makeslice(i))
 		if i > 1 then
@@ -281,6 +315,7 @@ function App:init()
 			local slice = slices[i]
 			fuseslices(pslice, slice)
 			
+--[=[ grad descent
 			if i > 2 then
 				-- now perturb radially to adjust to curvature
 				-- phi = (R - R')^2
@@ -302,10 +337,10 @@ function App:init()
 				end
 				for j=1,slicesize do	-- for each of the latest slice vtxs
 					local vi = slice[j]
-					local v = vtxs[vi]
+					local v = vi
 					for k=1,slicesize do	-- for each prev slice vtx that influences it ...
 						local pvi = pslice[k]
-						local pv = vtxs[pvi]
+						local pv = pvi
 						if findedge(vi, pvi) then
 							local tvs = pv:neighborTris()
 							local R = pv:curvature()
@@ -318,7 +353,7 @@ function App:init()
 							for _,t in ipairs(tvs) do
 								local a,b,c = t:getvtxs(vi)
 								if a then
-									local va, vb, vc = vtxs[a], vtxs[b], vtxs[c]
+									local va, vb, vc = a, b, c
 									local vba = vb - va
 									local vca = vc - va
 									local theta = vba:dot(vca) / (vba:length() * vca:length())
@@ -333,7 +368,7 @@ dtheta_dr = (b == pvi or c == pvi) and .1 or 0
 					end
 				end
 				for j=1,slicesize do
-					local v = vtxs[slice[j]]
+					local v = slice[j]
 					-- r' = r + dr
 					-- r'/r = 1 + dr/r
 					local r = math.sqrt(v[1]^2 + v[2]^2)
@@ -342,24 +377,24 @@ dtheta_dr = (b == pvi or c == pvi) and .1 or 0
 					end
 				end
 			end
+--]=]			
 		end
 	end
+--]==]
 
 	-- recenter
 	local com = vec4(0,0,0,0)
 	for _,v in ipairs(vtxs) do
-		com = com + v
+		com = com + v.pos
 	end
 	com = com / #vtxs
 	for i=1,#vtxs do
-		for j=1,4 do
-			vtxs[i][j] = vtxs[i][j] - com[j]
-		end
+		vtxs[i].pos = vtxs[i].pos - com
 	end	
 
 	--[[
 	for i,v in ipairs(vtxs) do
-		print(v.i, v:totalAngle())
+		print(v.index, v:totalAngle())
 	end
 	--]]
 end
@@ -380,15 +415,15 @@ function App:update()
 	gl.glPointSize(2)
 	gl.glBegin(gl.GL_POINTS)
 	for _,v in ipairs(vtxs) do
-		gl.glVertex3d(v:unpack(1,3))
+		gl.glVertex3d(v.pos:unpack(1,3))
 	end
 	gl.glEnd()
 
 	gl.glColor3f(1,1,0)
 	gl.glBegin(gl.GL_LINES)
 	for _,e in ipairs(edges) do
-		for _,a in ipairs(e) do
-			gl.glVertex3d(vtxs[a]:unpack(1,3))
+		for _,a in ipairs(e.vtxs) do
+			gl.glVertex3d(a.pos:unpack(1,3))
 		end
 	end
 	gl.glEnd()
@@ -400,10 +435,10 @@ function App:update()
 			local c = t.color
 			gl.glColor4d(c[1], c[2], c[3], alpha)
 		else
-			gl.glColor4d(1,1,0,alph)
+			gl.glColor4d(1,1,0,alpha)
 		end
-		for _,a in ipairs(t) do
-			gl.glVertex3d(vtxs[a]:unpack(1,3))
+		for _,a in ipairs(t.vtxs) do
+			gl.glVertex3d(a.pos:unpack(1,3))
 		end
 	end
 	gl.glEnd()
