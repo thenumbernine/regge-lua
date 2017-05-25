@@ -27,24 +27,11 @@ function Vertex:init(args)
 	self.tris = table()
 end
 
-function Vertex:neighborTris()
-	local i = self.index
-	local tvs = table()
-	for _,t in ipairs(tris) do
-		if table.find(t, i) then
-			tvs:insert(t)
-		end
-	end
-	return tvs
-end
-
 function Vertex:totalAngle()
-	local i = self.index
-	-- tvs is all triangles that hold vertex i
-	local tvs = self:neighborTris()
+	-- tvs is all triangles that hold this vertex
 	local theta = 0
-	for _,tv in ipairs(tvs) do
-		theta = theta + tv:angleForVertex(i)	
+	for _,tv in ipairs(self.tris) do
+		theta = theta + tv:angleForVertex(self)	
 	end
 	return theta
 end
@@ -66,6 +53,12 @@ function Edge:init(...)
 	self.tris = table()
 end
 
+function Edge:getVtxsByVtx(v)
+	local a,b = self.vtxs:unpack()
+	if v == a then return a,b end
+	if v == b then return b,a end
+end
+
 local Triangle = class()
 
 function Triangle:init(...)
@@ -83,15 +76,38 @@ function Triangle:angleForVertex(v)
 	if v == c then return math.acos(ac:dot(bc)) end
 end
 
-function Triangle:getvtxs(i)
+function Triangle:getVtxsByVtx(v,w)
 	local a,b,c = self.vtxs:unpack()
-	if i == a then return a, b, c end
-	if i == b then return b, c, a end
-	if i == c then return c, a, b end
+	if v and w then
+		if v == a and w == b then return a, b, c end
+		if v == a and w == c then return a, c, b end
+		if v == b and w == a then return b, a, c end
+		if v == b and w == c then return b, c, a end
+		if v == c and w == a then return c, a, b end
+		if v == c and w == b then return c, b, a end
+	end
+	if v then
+		if v == a then return a, b, c end
+		if v == b then return b, c, a end
+		if v == c then return c, a, b end
+	end
+end
+
+-- returns a,b,c where a,b are possessed by the edge
+function Triangle:getVtxsByEdge(e)
+	assert(#self.edges == 3)
+	for _,te in ipairs(self.edges) do
+		if te == e then
+			local a,b = e.vtxs:unpack()
+			local _, c = self.vtxs:find(nil, function(v) return v ~= a and v ~= b end)
+			assert(a and b and c)
+			return a,b,c
+		end
+	end
 end
 
 local function makevtx(x,y,z,t)
-	for i,v in ipairs(vtxs) do
+	for _,v in ipairs(vtxs) do
 		if v.pos[1] == x 
 		and v.pos[2] == y 
 		and v.pos[3] == z 
@@ -119,33 +135,36 @@ local function makeedge(a,b)
 end
 
 local function maketri(a,b,c, args)
-	local tri = {a,b,c}
-	table.sort(tri)
+	local vtxs = {a,b,c}
+	table.sort(vtxs)
 	for i,t in ipairs(tris) do
-		if t.vtxs[1] == tri[1] 
-		and t.vtxs[2] == tri[2] 
-		and t.vtxs[3] == tri[3] 
+		if t.vtxs[1] == vtxs[1] 
+		and t.vtxs[2] == vtxs[2] 
+		and t.vtxs[3] == vtxs[3] 
 		then
 			return t
 		end
 	end
 	
-	tri = Triangle(table.unpack(tri))
+	local t = Triangle(table.unpack(vtxs))
 	if args then
 		for k,v in pairs(args) do
-			tri[k] = v
+			t[k] = v
 		end
 	end
-	tris:insert(tri)
+	tris:insert(t)
 	
-	tri.edges:insert(makeedge(a,b))
-	tri.edges:insert(makeedge(a,c))
-	tri.edges:insert(makeedge(b,c))
-	for _,e in ipairs(tri.edges) do
-		e.tris:insert(tri)
+	t.edges:insert(makeedge(a,b))
+	t.edges:insert(makeedge(a,c))
+	t.edges:insert(makeedge(b,c))
+	for _,e in ipairs(t.edges) do
+		e.tris:insert(t)
+	end
+	for _,v in ipairs(t.vtxs) do
+		v.tris:insert(t)
 	end
 
-	return tri
+	return t
 end
 
 local function maketet(a,b,c,d)
@@ -256,7 +275,7 @@ function App:init()
 
 	local slices = table()
 		
-	local slicesize = 5
+	local slicesize = 10
 	local radius = slicesize / (2 * math.pi)
 
 	local function vtxpos(i,z,dr)
@@ -291,98 +310,110 @@ function App:init()
 		return ta, tb
 	end
 
-	local function findedge(a,b)
-		for _,e in ipairs(edges) do
-			if (e.vtxs[1] == a and e.vtxs[2] == b)
-			or (e.vtxs[1] == b and e.vtxs[2] == a)
-			then
-				return true
-			end
-		end
-	end
-
--- [==[
+--[==[ grow randomly
 	local sa = makeslice(0)
 	local sb = makeslice(1)
 	fuseslices(sa,sb)
-	-- 1) pick a random external edge (with only one triangle)
-	local openedges = edges:filter(function(edge) return #edge.tris == 1 end)
-	print(#openedges)
---]==]
---[==[
+	
 	for i=1,20 do
-		slices:insert(makeslice(i))
-		if i > 1 then
-			local pslice = slices[i-1]
-			local slice = slices[i]
-			fuseslices(pslice, slice)
+		-- 1) pick a random external edge (with only one triangle)
+		local openedges = edges:filter(function(edge) return #edge.tris == 1 end)
+		-- 2) put a vertex opposite of it
+		assert(#openedges > 0)
+		local edge = openedges[math.random(#openedges)]
+		local tri = edge.tris[1]
+		local a,b,c = tri:getVtxsByEdge(edge)
+		local v = makevtx((a.pos+b.pos-c.pos):unpack())
+		maketri(b,v,c)
+	end
+--]==]
+-- [==[ grow a new slice from the old, then minimize discrete curvature
+	slices:insert(makeslice(1))
+	slices:insert(makeslice(2))
+	fuseslices(slices[1], slices[2])
+	
+	for i=3,3 do
+		local pslice = slices[#slices]
+		local slice = makeslice(i)
+		slices:insert(slice)
+		
+		fuseslices(pslice, slice)
 			
---[=[ grad descent
-			if i > 2 then
-				-- now perturb radially to adjust to curvature
-				-- phi = (R - R')^2
-				-- dphi/dr = 2 (R - R') dR/dr
-				-- R = 2 pi - sum angles
-				-- dR/dr = -sum d/dr angle
-				-- angle = acos(theta) 
-				-- dangle / dr = -1 / sqrt(1 - theta^2) d/dr theta 
-				-- theta = (v1-v0) dot (v2-v0) / (|v1-v0||v2-v0|)
-				-- if v is v1 then dtheta/dr = dv1/dr dot (v2-v0) / (|v1-v0||v2-v0|) - (v1-v0) dot (v2-v0) dv1/dr / (|v1-v0||v2-v0|)^2
-				-- if v is v2 then dtheta/dr = dv2/dr dot (v2-v0) / (|v1-v0||v2-v0|) - (v1-v0) dot (v2-v0) dv2/dr / (|v1-v0||v2-v0|)^2
-				-- dv1/dr = v1/|v1|
-				-- we want to perturb the latest slice
-				-- such that the curvature of the previous slice
-				-- is solved for
-				local dphi_drs = table()
-				for j=1,slicesize do
-					dphi_drs[j] = 0
-				end
-				for j=1,slicesize do	-- for each of the latest slice vtxs
-					local vi = slice[j]
-					local v = vi
-					for k=1,slicesize do	-- for each prev slice vtx that influences it ...
-						local pvi = pslice[k]
-						local pv = pvi
-						if findedge(vi, pvi) then
-							local tvs = pv:neighborTris()
-							local R = pv:curvature()
-						
-							-- TODO make this a function of 'r'
-							local theta = math.atan2(pv[2], pv[1])
-							local desR = math.abs(theta) < (2 * math.pi / slicesize) and 3 or 0
-							
-							local dR_dr = 0
-							for _,t in ipairs(tvs) do
-								local a,b,c = t:getvtxs(vi)
-								if a then
-									local va, vb, vc = a, b, c
-									local vba = vb - va
-									local vca = vc - va
-									local theta = vba:dot(vca) / (vba:length() * vca:length())
-dtheta_dr = (b == pvi or c == pvi) and .1 or 0
-									local dangle_dr = -1 / math.sqrt(1 - theta^2) * dtheta_dr 
-									dR_dr = dR_dr - dangle_dr
-								end
-							end
-							local dphi_dr = 2 * (R - desR) * dR_dr
-							dphi_drs[j] = dphi_drs[j] + dphi_dr
-						end
-					end
-				end
-				for j=1,slicesize do
-					local v = slice[j]
-					-- r' = r + dr
-					-- r'/r = 1 + dr/r
-					local r = math.sqrt(v[1]^2 + v[2]^2)
-					for l=1,2 do
-						v[l] = v[l] * (1 + dphi_drs[j] / r)
+-- [=[ grad descent
+		-- we want to perturb the latest slice
+		-- such that the curvature of the previous slice
+		-- is solved for
+		-- phi = (R - R')^2
+		-- dphi/dv = 2 (R - R') dR/dv
+		-- R = 2 pi - sum angles
+		-- dR/dv = -sum d/dv angle
+		-- angle = acos(theta) 
+		-- d/dv angle = -1 / sqrt(1 - theta^2) d/dv theta 
+		-- theta = (v1-v0) dot (v2-v0) / (|v1-v0||v2-v0|)
+		-- theta = (v1_i-v0_i) dot (v2_i-v0_i) / sqrt(sum_j (v1_j-v0_j)^2 sum_k (v2_k-v0_k)^2)
+		-- d/dv1 theta = (v2 - v0) / (|v1-v0||v2-v0|)
+		--		- ((v1-v0) dot (v2-v0)) / (|v1-v0|*|v2-v0|)^2
+		--			 |v2-v0| * (v1-v0)/|v1-v0|
+		-- = (|v1-v0| unit(v2-v0) - unit(v1-v0) dot unit(v2-v0)) / |v1-v0|^2
+		-- d/dx x/|x| = I/|x| + x * (-1/|x|^2) * x/|x|
+		--		= I / |x| - x*x / |x|^3)
+		--		= (I (x.x) - x*x) / |x|^3
+		-- d/dx x/|x| dot y/|y|
+		--		= (y (x.x) - x (x.y)) / (|x|^3 |y|)
+		--		= uy / lx - ux (ux . uy) / lx 
+		local dphi_dvs = table()
+		for j=1,slicesize do
+			dphi_dvs[j] = vec4()
+		end
+		for k,pv in ipairs(pslice) do 		-- for each vertex in the previous slice 
+			local R = pv:curvature()		-- look at the curvature at the vertex
+			
+			local thetacoord = math.atan2(pv.pos[2], pv.pos[1])
+			local desR = math.abs(thetacoord) < (2 * math.pi / slicesize) and 3 or 0	-- look at the desired curvature
+
+print('pslice',k,'R',R,'desR',desR)
+			
+			local a = pv
+			for _,t in ipairs(pv.tris) do		-- for each triangle on that vertex ...
+				for q,b in ipairs(t.vtxs) do	-- for each vertex on the triangle ...
+					local j = slice:find(b)		-- if the vertex is in the next slice ...
+					if j then
+						local _,_,c = t:getVtxsByVtx(a,b)
+						local vba = b.pos - a.pos
+						local vca = c.pos - a.pos
+						local lba = vba:length()
+						local lca = vca:length()
+						local uba = vba / lba
+						local uca = vca / lca
+						local theta = uba:dot(uca)
+						local dtheta_dv = (uca - uba * theta) / lba
+						local dangle_dv = dtheta_dv * (-1 / math.sqrt(1 - theta^2)) 
+						local dR_dv = -dangle_dv
+						local dphi_dv = dR_dv * (2 * (R - desR))
+						b.pos = b.pos - dphi_dv
+						--dphi_dvs[j] = dphi_dvs[j] + dphi_dv
 					end
 				end
 			end
---]=]			
+print('new R', pv:curvature())		
 		end
+		--[[
+		for j=1,slicesize do
+			local v = slice[j]
+			local dt = 1
+			v.pos = v.pos + dphi_dvs[j] * dt
+		end
+		--]]
+--]=]			
 	end
 --]==]
+
+	for i,slice in ipairs(slices) do
+		print('slice',i)
+		for j,v in ipairs(slice) do
+			print('vtx',j,'curvature',v:curvature())
+		end
+	end
 
 	-- recenter
 	local com = vec4(0,0,0,0)
@@ -437,7 +468,7 @@ function App:update()
 			local c = t.color
 			gl.glColor4d(c[1], c[2], c[3], alpha)
 		else
-			gl.glColor4d(1,1,0,alpha)
+			gl.glColor4d(1,0,0,alpha)
 		end
 		for _,a in ipairs(t.vtxs) do
 			gl.glVertex3d(a.pos:unpack(1,3))
