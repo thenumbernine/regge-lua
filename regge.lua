@@ -40,6 +40,16 @@ function Vertex:curvature()
 	return 2 * math.pi - self:totalAngle()
 end
 
+function Vertex:getTrisByVtx(v)
+	local ts = table()
+	for _,t in ipairs(self.tris) do
+		if t.vtxs:find(v) then
+			ts:insert(t)
+		end
+	end
+	return ts
+end
+
 function Vertex.__lt(a,b) return tostring(a) < tostring(b) end
 
 function Vertex.__eq(a,b)
@@ -289,8 +299,29 @@ function App:init()
 	local function makeslice(z)
 		local slice = table()
 		for i=1,slicesize do
-			slice:insert(makevtx(vtxpos(i,z)))
+			local v = makevtx(vtxpos(i,z))
+			local theta = math.atan2(v.pos[2], v.pos[1])
+			v.R = math.abs(theta) < (2 * math.pi / slicesize) and 1 or 0
+			slice:insert(v)
 		end
+		return slice
+	end
+
+	local function extrudeslice(pslice)
+		local slice = table()
+		for i=1,#pslice do
+			local a = pslice[i]
+			local b = pslice[i%#pslice+1]
+			local ts = a:getTrisByVtx(b)
+			assert(#ts == 1)
+			local t = ts[1]
+			local _,_,c = t:getVtxsByVtx(a,b)
+			local vpos = a.pos + b.pos - c.pos
+			local v = makevtx(vpos:unpack())
+			v.R = 0 --c.R and c.R or .5 * (a.R + b.R)
+			slice:insert(v)
+		end
+		slice:insert(1, slice:remove())
 		return slice
 	end
 
@@ -308,6 +339,77 @@ function App:init()
 			end
 		end
 		return ta, tb
+	end
+
+	local function convergeSlice(slice, pslice)
+		-- we want to perturb the latest slice
+		-- such that the curvature of the previous slice
+		-- is solved for
+		-- phi = (R - R')^2
+		-- dphi/dv = 2 (R - R') dR/dv
+		-- R = 2 pi - sum angles
+		-- dR/dv = -sum d/dv angle
+		-- angle = acos(theta) 
+		-- d/dv angle = -1 / sqrt(1 - theta^2) d/dv theta 
+		-- theta = (b-a) dot (c-a) / (|b-a||c-a|)
+		-- d/dx x/|x| = I/|x| + x * (-1/|x|^2) * x/|x|
+		--		= I / |x| - x*x / |x|^3)
+		--		= (I (x.x) - x*x) / |x|^3
+		-- d/dx x/|x| dot y/|y|
+		--		= (y (x.x) - x (x.y)) / (|x|^3 |y|)
+		--		= (uy - ux (ux . uy)) / |x|
+		local totalPhi = 0
+		for _,v in ipairs(pslice) do
+			totalPhi = totalPhi + (v:curvature() - v.R)^2
+		end
+		print('total phi', totalPhi)		
+		
+		local dt = 1
+		for try=1,1 do	
+			local dphi_dvs = table()
+			for j=1,slicesize do
+				dphi_dvs[j] = vec4()
+			end
+			for k,pv in ipairs(pslice) do 		-- for each vertex in the previous slice 
+				local R = pv:curvature()		-- look at the curvature at the vertex
+				
+--io.write('pslice\t',k,'\tR\t',R,'\tdesR\t',pv.R,'\t|R-desR|\t', math.abs(R - pv.R))
+				
+				local a = pv
+				for _,t in ipairs(pv.tris) do		-- for each triangle on that vertex ...
+					for q,b in ipairs(t.vtxs) do	-- for each vertex on the triangle ...
+						local j = slice:find(b)		-- if the vertex is in the next slice ...
+						if j then
+							local _,_,c = t:getVtxsByVtx(a,b)
+							local vba = b.pos - a.pos
+							local vca = c.pos - a.pos
+							local lba = vba:length()
+							local lca = vca:length()
+							local uba = vba / lba
+							local uca = vca / lca
+							local theta = uba:dot(uca)
+							local dtheta_dv = (uca - uba * theta) / lba
+							local dangle_dv = dtheta_dv * (-1 / math.sqrt(1 - theta^2))
+							local dR_dv = -dangle_dv
+							local dphi_dv = dR_dv * (2 * (R - pv.R))
+							dphi_dvs[j] = dphi_dvs[j] + dphi_dv
+						end
+					end
+				end
+--io.write('\tnew R\t', pv:curvature(),'\tnew |R-desR|\t',math.abs(R-pv.R),'\n')
+			end
+			for j=1,slicesize do
+				local v = slice[j]
+				v.pos = v.pos - dphi_dvs[j] * dt
+			end
+		
+			local totalPhi = 0
+			for _,v in ipairs(pslice) do
+				totalPhi = totalPhi + (v:curvature() - v.R)^2
+			end
+			print('total phi', totalPhi)		
+		
+		end
 	end
 
 --[==[ grow randomly
@@ -328,83 +430,23 @@ function App:init()
 	end
 --]==]
 -- [==[ grow a new slice from the old, then minimize discrete curvature
-	slices:insert(makeslice(1))
-	slices:insert(makeslice(2))
-	fuseslices(slices[1], slices[2])
-	
-	for i=3,3 do
-		local pslice = slices[#slices]
-		local slice = makeslice(i)
+	for i=1,3 do
+		local pslice = slices[i-1]
+		local slice
+		if i > 2 then
+			slice = extrudeslice(slices[i-1])
+		else
+  		slice = makeslice(i)
+		end
 		slices:insert(slice)
-		
-		fuseslices(pslice, slice)
-			
--- [=[ grad descent
-		-- we want to perturb the latest slice
-		-- such that the curvature of the previous slice
-		-- is solved for
-		-- phi = (R - R')^2
-		-- dphi/dv = 2 (R - R') dR/dv
-		-- R = 2 pi - sum angles
-		-- dR/dv = -sum d/dv angle
-		-- angle = acos(theta) 
-		-- d/dv angle = -1 / sqrt(1 - theta^2) d/dv theta 
-		-- theta = (v1-v0) dot (v2-v0) / (|v1-v0||v2-v0|)
-		-- theta = (v1_i-v0_i) dot (v2_i-v0_i) / sqrt(sum_j (v1_j-v0_j)^2 sum_k (v2_k-v0_k)^2)
-		-- d/dv1 theta = (v2 - v0) / (|v1-v0||v2-v0|)
-		--		- ((v1-v0) dot (v2-v0)) / (|v1-v0|*|v2-v0|)^2
-		--			 |v2-v0| * (v1-v0)/|v1-v0|
-		-- = (|v1-v0| unit(v2-v0) - unit(v1-v0) dot unit(v2-v0)) / |v1-v0|^2
-		-- d/dx x/|x| = I/|x| + x * (-1/|x|^2) * x/|x|
-		--		= I / |x| - x*x / |x|^3)
-		--		= (I (x.x) - x*x) / |x|^3
-		-- d/dx x/|x| dot y/|y|
-		--		= (y (x.x) - x (x.y)) / (|x|^3 |y|)
-		--		= uy / lx - ux (ux . uy) / lx 
-		local dphi_dvs = table()
-		for j=1,slicesize do
-			dphi_dvs[j] = vec4()
+	
+		if i >= 2 then
+			fuseslices(pslice, slice)
 		end
-		for k,pv in ipairs(pslice) do 		-- for each vertex in the previous slice 
-			local R = pv:curvature()		-- look at the curvature at the vertex
-			
-			local thetacoord = math.atan2(pv.pos[2], pv.pos[1])
-			local desR = math.abs(thetacoord) < (2 * math.pi / slicesize) and 3 or 0	-- look at the desired curvature
 
-print('pslice',k,'R',R,'desR',desR)
-			
-			local a = pv
-			for _,t in ipairs(pv.tris) do		-- for each triangle on that vertex ...
-				for q,b in ipairs(t.vtxs) do	-- for each vertex on the triangle ...
-					local j = slice:find(b)		-- if the vertex is in the next slice ...
-					if j then
-						local _,_,c = t:getVtxsByVtx(a,b)
-						local vba = b.pos - a.pos
-						local vca = c.pos - a.pos
-						local lba = vba:length()
-						local lca = vca:length()
-						local uba = vba / lba
-						local uca = vca / lca
-						local theta = uba:dot(uca)
-						local dtheta_dv = (uca - uba * theta) / lba
-						local dangle_dv = dtheta_dv * (-1 / math.sqrt(1 - theta^2)) 
-						local dR_dv = -dangle_dv
-						local dphi_dv = dR_dv * (2 * (R - desR))
-						b.pos = b.pos - dphi_dv
-						--dphi_dvs[j] = dphi_dvs[j] + dphi_dv
-					end
-				end
-			end
-print('new R', pv:curvature())		
+		if i >= 3 then
+			convergeSlice(slice, pslice)
 		end
-		--[[
-		for j=1,slicesize do
-			local v = slice[j]
-			local dt = 1
-			v.pos = v.pos + dphi_dvs[j] * dt
-		end
-		--]]
---]=]			
 	end
 --]==]
 
