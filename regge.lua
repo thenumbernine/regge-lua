@@ -103,6 +103,17 @@ function Triangle:getVtxsByVtx(v,w)
 	end
 end
 
+function Triangle:remove()
+	tris:removeObject(self)
+	for _,e in ipairs(self.edges) do
+		e.tris:removeObject(self)
+	end
+	for _,v in ipairs(self.vtxs) do
+		v.tris:removeObject(self)
+	end
+	-- TODO remove any edges / vertices that are alone
+end
+
 -- returns a,b,c where a,b are possessed by the edge
 function Triangle:getVtxsByEdge(e)
 	assert(#self.edges == 3)
@@ -284,16 +295,17 @@ function App:init()
 	--]]
 
 	local slices = table()
-		
-	local slicesize = 10
-	local radius = slicesize / (2 * math.pi)
+	
+	local baselength = 1
+	local slicesize = 20
 
 	local function vtxpos(i,z,dr)
 		dr = dr or 0
+		local radius = baselength * slicesize / (2 * math.pi)
 		local r = radius + dr
 		local th = 2 * math.pi * (i-1 - .5*z) / slicesize
 		local c, s = r * math.cos(th), r * math.sin(th)
-		return c, s, z * math.sqrt(3) / 2, 0
+		return c, s, z * math.sqrt(3) / 2 * baselength, 0
 	end
 
 	local function makeslice(z)
@@ -301,7 +313,7 @@ function App:init()
 		for i=1,slicesize do
 			local v = makevtx(vtxpos(i,z))
 			local theta = math.atan2(v.pos[2], v.pos[1])
-			v.R = math.abs(theta) < (2 * math.pi / slicesize) and 1 or 0
+			v.R = math.abs(theta) < (2 * math.pi / slicesize) and -1 or 1
 			slice:insert(v)
 		end
 		return slice
@@ -316,12 +328,25 @@ function App:init()
 			assert(#ts == 1)
 			local t = ts[1]
 			local _,_,c = t:getVtxsByVtx(a,b)
-			local vpos = a.pos + b.pos - c.pos
+			local vpos = (a.pos + b.pos - c.pos * 2)
+				:normalize() 
+				+ c.pos
 			local v = makevtx(vpos:unpack())
-			v.R = 0 --c.R and c.R or .5 * (a.R + b.R)
+			v.R = c.R or .5 * (a.R + b.R)
 			slice:insert(v)
 		end
-		slice:insert(1, slice:remove())
+		--[[
+		for i=#slice,1,-1 do
+			local a = slice[i]
+			local b = slice[i%#slice+1]
+			if (a.pos-b.pos):length() > 1.5 * baselength then
+				local v = makevtx(((a.pos + b.pos) * .5):unpack())
+				v.R = (a.R + b.R) * .5
+				slice:insert(i+1,v)
+			end
+		end
+		--]]
+		--slice:insert(1, slice:remove())
 		return slice
 	end
 
@@ -329,8 +354,8 @@ function App:init()
 		local ta = table()
 		local tb = table()
 		for i=1,#slice do
-			local a,b = slice[i], slice[i%slicesize+1]
-			local x,y = slice2[i], slice2[i%slicesize+1]
+			local a,b = slice[i], slice[i%#slice+1]
+			local x,y = slice2[i], slice2[i%#slice2+1]
 			if a and x and y then
 				tb:insert(maketri(y,x,a, {color={1,0,0}}))
 			end
@@ -364,10 +389,10 @@ function App:init()
 		end
 		print('total phi', totalPhi)		
 		
-		local dt = 1
-		for try=1,1 do	
+		local dt = .01
+		for try=1,100 do	
 			local dphi_dvs = table()
-			for j=1,slicesize do
+			for j=1,#slice do
 				dphi_dvs[j] = vec4()
 			end
 			for k,pv in ipairs(pslice) do 		-- for each vertex in the previous slice 
@@ -398,7 +423,7 @@ function App:init()
 				end
 --io.write('\tnew R\t', pv:curvature(),'\tnew |R-desR|\t',math.abs(R-pv.R),'\n')
 			end
-			for j=1,slicesize do
+			for j=1,#slice do
 				local v = slice[j]
 				v.pos = v.pos - dphi_dvs[j] * dt
 			end
@@ -430,13 +455,14 @@ function App:init()
 	end
 --]==]
 -- [==[ grow a new slice from the old, then minimize discrete curvature
-	for i=1,3 do
+	for i=1,11 do
 		local pslice = slices[i-1]
 		local slice
 		if i > 2 then
+			print('extruding slice '..i)
 			slice = extrudeslice(slices[i-1])
 		else
-  		slice = makeslice(i)
+			slice = makeslice(i)
 		end
 		slices:insert(slice)
 	
