@@ -207,11 +207,12 @@ function App:init()
 		--		= (uy - ux (ux . uy)) / |x|
 		local totalPhi = 0
 		for _,v in ipairs(pslice) do
-			totalPhi = totalPhi + (v:curvature() - v.R)^2
+			local dK = v:curvature() - v.R
+			totalPhi = totalPhi + dK * dK
 		end
 		print('total phi', totalPhi)		
 		
-		local dt = .01
+		local dt = 1
 		for try=1,100 do	
 			local dphi_dvs = table()
 			for j=1,#slice do
@@ -236,7 +237,7 @@ function App:init()
 							local uca = vca / lca
 							local theta = uba:dot(uca)
 							local dtheta_dv = (uca - uba * theta) / lba
-							local dangle_dv = dtheta_dv * (-1 / math.sqrt(1 - theta^2))
+							local dangle_dv = dtheta_dv * (-1 / math.sqrt(1 - theta * theta))
 							local dR_dv = -dangle_dv
 							local dphi_dv = dR_dv * (2 * (R - pv.R))
 							dphi_dvs[j] = dphi_dvs[j] + dphi_dv
@@ -252,7 +253,8 @@ function App:init()
 		
 			local totalPhi = 0
 			for _,v in ipairs(pslice) do
-				totalPhi = totalPhi + (v:curvature() - v.R)^2
+				local dK = v:curvature() - v.R
+				totalPhi = totalPhi + dK * dK
 			end
 			print('total phi', totalPhi)		
 		
@@ -290,6 +292,9 @@ function App:init()
 	
 		if i >= 2 then
 			local ta, tb = fuseslices(pslice, slice)
+			if i >= 3 then
+				convergeSlice(slice, pslice)
+			end
 			-- [[
 			-- now split edges too big
 			-- they're all about 1 for now
@@ -322,9 +327,6 @@ function App:init()
 						slice:insert(i, vn)
 					end
 				end
-			end
-			if i >= 3 then
-				convergeSlice(slice, pslice)
 			end
 			--]]
 		end
@@ -384,8 +386,8 @@ function App:initGL()
 end
 
 function App:update()
-	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 	App.super.update(self)
+	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
 gl.glEnable(gl.GL_LIGHT0)
 gl.glLightModelf(gl.GL_LIGHT_MODEL_LOCAL_VIEWER, gl.GL_FALSE)
