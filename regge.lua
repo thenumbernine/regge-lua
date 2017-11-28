@@ -1,210 +1,23 @@
 #!/usr/bin/env luajit
 require 'ext'
 require 'vec'
+local ffi = require 'ffi'
 local ImGuiApp = require 'imguiapp'
 local gl = require 'gl'
 local ig = require 'ffi.imgui'
 local bit = bit32 or require 'bit'
+local vec4f = require 'ffi.vec.vec4f'
 
 local View = require 'glapp.view'
 local Orbit = require 'glapp.orbit'
+
+require 'graph'
 
 local App = class(Orbit(View.apply(ImGuiApp)))
 
 App.title = 'Regge calculus demo'
 App.viewDist = 2
 
-local vtxs = table()
-local edges = table()
-local tris = table()
-local tets = table()
-
-local Vertex = class()
-
-function Vertex:init(args)
-	for k,v in pairs(args) do self[k] = v end 
-	self.edges = table()
-	self.tris = table()
-end
-
-function Vertex:totalAngle()
-	-- tvs is all triangles that hold this vertex
-	local theta = 0
-	for _,tv in ipairs(self.tris) do
-		theta = theta + tv:angleForVertex(self)	
-	end
-	return theta
-end
-
-function Vertex:curvature()
-	return 2 * math.pi - self:totalAngle()
-end
-
-function Vertex:getTrisByVtx(v)
-	local ts = table()
-	for _,t in ipairs(self.tris) do
-		if t.vtxs:find(v) then
-			ts:insert(t)
-		end
-	end
-	return ts
-end
-
-function Vertex.__lt(a,b) return tostring(a) < tostring(b) end
-
-function Vertex.__eq(a,b)
-	return a.pos == b.pos 
-end
-
-local Edge = class()
-
-function Edge:init(...)
-	self.vtxs = table{...}
-	self.tris = table()
-end
-
-function Edge:getVtxsByVtx(v)
-	local a,b = self.vtxs:unpack()
-	if v == a then return a,b end
-	if v == b then return b,a end
-end
-
-local Triangle = class()
-
-function Triangle:init(...)
-	self.vtxs = table{...}
-	self.edges = table()
-end
-
-function Triangle:angleForVertex(v)
-	local a,b,c = self.vtxs:unpack()
-	local ab = (b.pos - a.pos):normalize()
-	local ac = (c.pos - a.pos):normalize()
-	local bc = (c.pos - b.pos):normalize()
-	if v == a then return math.acos(ab:dot(ac)) end
-	if v == b then return math.acos(-ab:dot(bc)) end
-	if v == c then return math.acos(ac:dot(bc)) end
-end
-
-function Triangle:getVtxsByVtx(v,w)
-	local a,b,c = self.vtxs:unpack()
-	if v and w then
-		if v == a and w == b then return a, b, c end
-		if v == a and w == c then return a, c, b end
-		if v == b and w == a then return b, a, c end
-		if v == b and w == c then return b, c, a end
-		if v == c and w == a then return c, a, b end
-		if v == c and w == b then return c, b, a end
-	end
-	if v then
-		if v == a then return a, b, c end
-		if v == b then return b, c, a end
-		if v == c then return c, a, b end
-	end
-end
-
-function Triangle:remove()
-	tris:removeObject(self)
-	for _,e in ipairs(self.edges) do
-		e.tris:removeObject(self)
-	end
-	for _,v in ipairs(self.vtxs) do
-		v.tris:removeObject(self)
-	end
-	-- TODO remove any edges / vertices that are alone
-end
-
--- returns a,b,c where a,b are possessed by the edge
-function Triangle:getVtxsByEdge(e)
-	assert(#self.edges == 3)
-	for _,te in ipairs(self.edges) do
-		if te == e then
-			local a,b = e.vtxs:unpack()
-			local _, c = self.vtxs:find(nil, function(v) return v ~= a and v ~= b end)
-			assert(a and b and c)
-			return a,b,c
-		end
-	end
-end
-
-local function makevtx(x,y,z,t)
-	for _,v in ipairs(vtxs) do
-		if v.pos[1] == x 
-		and v.pos[2] == y 
-		and v.pos[3] == z 
-		and v.pos[4] == t
-		then 
-			return v
-		end
-	end
-	local v = Vertex{pos=vec4(x,y,z,t), index=#vtxs+1}
-	vtxs:insert(v)
-	return v
-end
-
-local function makeedge(a,b)
-	for i,e in ipairs(edges) do
-		if (e.vtxs[1] == a and e.vtxs[2] == b)
-		or (e.vtxs[2] == a and e.vtxs[1] == b)
-		then return e end
-	end
-	local e = Edge(a,b)
-	edges:insert(e)
-	a.edges:insert(e)
-	b.edges:insert(e)
-	return e
-end
-
-local function maketri(a,b,c, args)
-	local vtxs = {a,b,c}
-	table.sort(vtxs)
-	for i,t in ipairs(tris) do
-		if t.vtxs[1] == vtxs[1] 
-		and t.vtxs[2] == vtxs[2] 
-		and t.vtxs[3] == vtxs[3] 
-		then
-			return t
-		end
-	end
-	
-	local t = Triangle(table.unpack(vtxs))
-	if args then
-		for k,v in pairs(args) do
-			t[k] = v
-		end
-	end
-	tris:insert(t)
-	
-	t.edges:insert(makeedge(a,b))
-	t.edges:insert(makeedge(a,c))
-	t.edges:insert(makeedge(b,c))
-	for _,e in ipairs(t.edges) do
-		e.tris:insert(t)
-	end
-	for _,v in ipairs(t.vtxs) do
-		v.tris:insert(t)
-	end
-
-	return t
-end
-
-local function maketet(a,b,c,d)
-	local as = {a,b,c,d}
-	table.sort(as)
-	for i,t in ipairs(tets) do
-		if t[1] == as[1] and t[2] == as[2] and t[3] == as[3] and t[4] == as[4] then
-			return i
-		end
-	end
-	tets:insert(as)
-	
-	maketri(a,b,c)
-	maketri(a,b,d)
-	maketri(a,c,d)
-	maketri(b,c,d)
-	
-	return #tets
-end
 
 -- height: 1/2^2 + y^2 = 1 <=> y = sqrt(3/4) = sqrt(3) / 2
 -- 2D center is x=1/2, y=x * tan(30) = 1/2 * 1/sqrt(3) = 1/(2*sqrt(3))
@@ -224,9 +37,9 @@ end
 
 function App:init()
 	App.super.init(self)
-	local gridsize = vec3(10,10,10)
 
-	--[[
+--[=[ lattice
+	local gridsize = vec3(3,3,3)
 	for k=1,gridsize[3] do
 		for j=1,gridsize[2] do
 			for i=1,gridsize[1] do
@@ -285,8 +98,12 @@ function App:init()
 			end
 		end
 	end
-	--]]
-
+	
+	for j,v in ipairs(vtxs) do
+		print('vtx',j,'curvature',v:curvature())
+	end
+--]=]
+-- [=[
 	--[[
 	deficit angle
 	in 2D is 2 pi - sum of triangle angles meeting at a vertex
@@ -313,28 +130,32 @@ function App:init()
 		for i=1,slicesize do
 			local v = makevtx(vtxpos(i,z))
 			local theta = math.atan2(v.pos[2], v.pos[1])
-			v.R = math.abs(theta) < (2 * math.pi / slicesize) and -1 or 1
+			v.R = -.3	 --math.abs(theta) < (2 * math.pi / slicesize) and .1 or -.1
 			slice:insert(v)
 		end
 		return slice
 	end
 
 	local function extrudeslice(pslice)
+		-- [[
 		local slice = table()
 		for i=1,#pslice do
 			local a = pslice[i]
 			local b = pslice[i%#pslice+1]
 			local ts = a:getTrisByVtx(b)
-			assert(#ts == 1)
+			if #ts ~= 1 then
+				error("expected 1 triangle but found "..#ts)
+			end
 			local t = ts[1]
 			local _,_,c = t:getVtxsByVtx(a,b)
-			local vpos = (a.pos + b.pos - c.pos * 2)
-				:normalize() 
-				+ c.pos
+			--local vpos = (a.pos + b.pos - c.pos * 2):normalize()  + c.pos
+			local vpos = ((a.pos + b.pos) * .5 - c.pos) + (a.pos + b.pos) * .5
 			local v = makevtx(vpos:unpack())
 			v.R = c.R or .5 * (a.R + b.R)
 			slice:insert(v)
 		end
+		slice:insert(1, slice:remove())
+		--]]
 		--[[
 		for i=#slice,1,-1 do
 			local a = slice[i]
@@ -350,6 +171,7 @@ function App:init()
 		return slice
 	end
 
+	-- TODO match nearest?
 	local function fuseslices(slice, slice2)
 		local ta = table()
 		local tb = table()
@@ -467,11 +289,44 @@ function App:init()
 		slices:insert(slice)
 	
 		if i >= 2 then
-			fuseslices(pslice, slice)
-		end
-
-		if i >= 3 then
-			convergeSlice(slice, pslice)
+			local ta, tb = fuseslices(pslice, slice)
+			-- [[
+			-- now split edges too big
+			-- they're all about 1 for now
+			for i=#slice,1,-1 do
+				local va = slice[i]
+				local vb = slice[(i-2)%#slice+1]
+				local ts = va:getTrisByVtx(vb)
+				if #ts ~= 1 then
+					error("FOUND #ts ~= 1: ".. #ts)
+					va.color = {1,0,0}
+					vb.color = {1,0,0}
+				else
+					assert(#ts == 1)
+					local t = ts[1]
+					local edge = t:getEdgeForVtxs(va,vb)
+					local len = (vb.pos - va.pos):length()
+					
+					if len > 1.2 then 
+						
+						-- notice this is destructive
+						-- it adds a new vtx midway through edge
+						-- removes edge
+						-- removes all tris that reference edge
+						-- and replaces each with two tris that instead use the new vtx
+						local vn, ea, eb, newts = edge:split() 
+						assert(#newts == 2)
+						newts[1].color = {0,1,0}
+						newts[2].color = {1,0,1}
+						vn.R = (va.R + vb.R) * .5
+						slice:insert(i, vn)
+					end
+				end
+			end
+			if i >= 3 then
+				convergeSlice(slice, pslice)
+			end
+			--]]
 		end
 	end
 --]==]
@@ -482,6 +337,7 @@ function App:init()
 			print('vtx',j,'curvature',v:curvature())
 		end
 	end
+--]=]
 
 	-- recenter
 	local com = vec4(0,0,0,0)
@@ -492,6 +348,25 @@ function App:init()
 	for i=1,#vtxs do
 		vtxs[i].pos = vtxs[i].pos - com
 	end	
+
+	-- calculate triangle normals
+	for _,t in ipairs(tris) do
+		local a,b,c = t.vtxs:unpack()
+		t.normal = vec3.cross(c.pos - b.pos, b.pos - a.pos):normalize()
+	end
+
+	-- calculate vertex normals
+	for _,v in ipairs(vtxs) do v.normal = vec3() end
+	for _,t in ipairs(tris) do
+		for _,v in ipairs(t.vtxs) do
+			if t.normal:dot(v.normal) > 0 then
+				v.normal = v.normal + t.normal
+			else
+				v.normal = v.normal - t.normal
+			end
+		end
+	end
+	for _,v in ipairs(vtxs) do v.normal = v.normal:normalize() end
 
 	--[[
 	for i,v in ipairs(vtxs) do
@@ -512,41 +387,98 @@ function App:update()
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 	App.super.update(self)
 
-	gl.glColor3f(1,1,1)
-	gl.glPointSize(2)
-	gl.glBegin(gl.GL_POINTS)
-	for _,v in ipairs(vtxs) do
-		gl.glVertex3d(v.pos:unpack(1,3))
-	end
-	gl.glEnd()
+gl.glEnable(gl.GL_LIGHT0)
+gl.glLightModelf(gl.GL_LIGHT_MODEL_LOCAL_VIEWER, gl.GL_FALSE)
+gl.glLightModelf(gl.GL_LIGHT_MODEL_TWO_SIDE, gl.GL_FALSE)
+gl.glLightModelfv(gl.GL_LIGHT_MODEL_AMBIENT, vec4f(0,0,0,0):ptr())
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, vec4f(0,0,0,1):ptr())
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_AMBIENT, vec4f(.3,.3,.3,1):ptr())
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, vec4f(1,1,1,1):ptr())
+gl.glColorMaterial(gl.GL_FRONT_AND_BACK, gl.GL_DIFFUSE)
+gl.glEnable(gl.GL_COLOR_MATERIAL)
 
-	gl.glColor3f(1,1,0)
-	gl.glBegin(gl.GL_LINES)
-	for _,e in ipairs(edges) do
-		for _,a in ipairs(e.vtxs) do
-			gl.glVertex3d(a.pos:unpack(1,3))
+	if drawVertexes[0] then
+		gl.glColor3f(1,1,1)
+		gl.glPointSize(3)
+		gl.glBegin(gl.GL_POINTS)
+		for _,v in ipairs(vtxs) do
+			if v.color then
+				gl.glColor3f(table.unpack(v.color))
+			else
+				gl.glColor3f(1,1,1)
+			end
+			gl.glVertex3d(v.pos:unpack(1,3))
 		end
+		gl.glEnd()
 	end
-	gl.glEnd()
 
+	if drawEdges[0] then
+		gl.glColor3f(1,1,0)
+		gl.glBegin(gl.GL_LINES)
+		for _,e in ipairs(edges) do
+			for _,a in ipairs(e.vtxs) do
+				gl.glVertex3d(a.pos:unpack(1,3))
+			end
+		end
+		gl.glEnd()
+	end
+
+	if drawNormals[0] then
+		gl.glColor3f(1,0,1)
+		gl.glBegin(gl.GL_LINES)
+		for _,t in ipairs(tris) do
+			local a,b,c = t.vtxs:unpack()
+			local x = vec3(((a.pos + b.pos + c.pos) * (1/3)):unpack())
+			gl.glVertex3d(x:unpack())
+			gl.glVertex3d((x + t.normal):unpack())
+		end
+		gl.glEnd()
+	end
+
+	if useBlend[0] then
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glDisable(gl.GL_DEPTH_TEST)
+	end
 	local alpha = 1
-	gl.glBegin(gl.GL_TRIANGLES)
-	for _,t in ipairs(tris) do
-		if t.color then
-			local c = t.color
-			gl.glColor4d(c[1], c[2], c[3], alpha)
-		else
-			gl.glColor4d(1,0,0,alpha)
-		end
-		for _,a in ipairs(t.vtxs) do
-			gl.glVertex3d(a.pos:unpack(1,3))
-		end
+	if useLighting[0] then 
+		gl.glEnable(gl.GL_LIGHTING)
 	end
-	gl.glEnd()
+	if drawTriangles[0] then
+		gl.glBegin(gl.GL_TRIANGLES)
+		for _,t in ipairs(tris) do
+			if t.color then
+				local c = t.color
+				gl.glColor4d(c[1], c[2], c[3], alpha)
+			else
+				gl.glColor4d(1,0,0,alpha)
+			end
+			for _,v in ipairs(t.vtxs) do
+				gl.glNormal3d(v.normal:unpack(1,3))
+				gl.glVertex3d(v.pos:unpack(1,3))
+			end
+		end
+		gl.glEnd()
+	end
+
+	gl.glDisable(gl.GL_LIGHTING)
+	gl.glDisable(gl.GL_BLEND)
+	gl.glEnable(gl.GL_DEPTH_TEST)
 end
 
+drawVertexes = ffi.new('bool[1]', true)
+drawEdges = ffi.new('bool[1]', true)
+drawTriangles = ffi.new('bool[1]', true)
+drawNormals = ffi.new('bool[1]', true)
+useLighting = ffi.new('bool[1]', true)
+useBlend = ffi.new('bool[1]', true)
 function App:updateGUI()
-
+	ig.igCheckbox('vertexes', drawVertexes)
+	ig.igCheckbox('edges', drawEdges)
+	ig.igCheckbox('triangles', drawTriangles)
+	ig.igCheckbox('normals', drawNormals)
+	ig.igCheckbox('light', useLighting)
+	ig.igCheckbox('transparent', useBlend)
 end
 
 App():run()
