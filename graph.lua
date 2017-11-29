@@ -108,8 +108,13 @@ function Edge:split()
 		t:remove()
 
 		-- make two new tris
-		newts:insert(maketri(n,b,c))
-		newts:insert(maketri(c,a,n))
+		local nt = maketri(n,b,c)
+		if t.color then nt.color = vec3(t.color:unpack()) end
+		newts:insert(nt)
+		
+		local nt = maketri(c,a,n)
+		if t.color then nt.color = vec3(t.color:unpack()) end
+		newts:insert(nt)
 
 		-- should be the same for all new tris created
 		e1 = t:getEdgeForVtxs(a, n)
@@ -138,21 +143,34 @@ function Triangle:angleForVertex(v)
 	if v == c then return math.acos(ac:dot(bc)) end
 end
 
+-- provide 2 vertexes, returns the 3rd
+function Triangle:get3rdVtx(v,w)
+	local a,b,c = self.vtxs:unpack()
+	if v == a and w == b then return c end
+	if v == a and w == c then return b end
+	if v == b and w == a then return c end
+	if v == b and w == c then return a end
+	if v == c and w == a then return b end
+	if v == c and w == b then return a end
+end
+
+-- provide 1 vertex, returns the 2nd and 3rd vertexes
+function Triangle:get23Vtxs(v)
+	local a,b,c = self.vtxs:unpack()
+	if v == a then return b, c end
+	if v == b then return c, a end
+	if v == c then return a, b end
+end
+
 function Triangle:getVtxsByVtx(v,w)
 	local a,b,c = self.vtxs:unpack()
 	if v and w then
-		if v == a and w == b then return a, b, c end
-		if v == a and w == c then return a, c, b end
-		if v == b and w == a then return b, a, c end
-		if v == b and w == c then return b, c, a end
-		if v == c and w == a then return c, a, b end
-		if v == c and w == b then return c, b, a end
+		return v, w, self:get3rdVtx(v, x)
 	end
 	if v then
-		if v == a then return a, b, c end
-		if v == b then return b, c, a end
-		if v == c then return c, a, b end
+		return v, self:get23Vtxs(v)
 	end
+	return a,b,c
 end
 
 function Triangle:remove()

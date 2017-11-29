@@ -130,7 +130,7 @@ function App:init()
 		for i=1,slicesize do
 			local v = makevtx(vtxpos(i,z))
 			local theta = math.atan2(v.pos[2], v.pos[1])
-			v.R = -.2	 --math.abs(theta) < (2 * math.pi / slicesize) and .1 or -.1
+			v.R = math.abs(theta) < (2 * math.pi / slicesize) and .1 or -.2
 			slice:insert(v)
 		end
 		return slice
@@ -147,9 +147,9 @@ function App:init()
 				error("expected 1 triangle but found "..#ts)
 			end
 			local t = ts[1]
-			local _,_,c = t:getVtxsByVtx(a,b)
-			--local vpos = (a.pos + b.pos - c.pos * 2):normalize()  + c.pos
-			local vpos = ((a.pos + b.pos) * .5 - c.pos) + (a.pos + b.pos) * .5
+			local c = t:get3rdVtx(a,b)
+			local abpos = (a.pos + b.pos) * .5
+			local vpos = (abpos - c.pos):normalize() + abpos
 			local v = makevtx(vpos:unpack())
 			v.R = c.R or .5 * (a.R + b.R)
 			slice:insert(v)
@@ -228,7 +228,7 @@ function App:init()
 					for q,b in ipairs(t.vtxs) do	-- for each vertex on the triangle ...
 						local j = slice:find(b)		-- if the vertex is in the next slice ...
 						if j then
-							local _,_,c = t:getVtxsByVtx(a,b)
+							local c = t:get3rdVtx(a,b)
 							local vba = b.pos - a.pos
 							local vca = c.pos - a.pos
 							local lba = vba:length()
@@ -279,7 +279,7 @@ function App:init()
 	end
 --]==]
 -- [==[ grow a new slice from the old, then minimize discrete curvature
-	local maxiters = 9
+	local maxiters = 7
 	local colorForIter = range(maxiters):map(function() 
 		return vec3(math.random(), math.random(), math.random()):normalize()
 	end)
@@ -293,13 +293,13 @@ function App:init()
 			slice = makeslice(i)
 		end
 		slices:insert(slice)
-	
+
+		local splitLength = 1.5
+
 		if i >= 2 then
 			local ta, tb = fuseslices(pslice, slice)
-			for _,t in ipairs(ta) do
-				t.color = colorForIter[i]
-			end
-			for _,t in ipairs(tb) do
+			local tab = table():append(ta):append(tb)
+			for _,t in ipairs(tab) do
 				t.color = colorForIter[i]
 			end
 			if i >= 3 then
@@ -314,26 +314,67 @@ function App:init()
 				local ts = va:getTrisByVtx(vb)
 				if #ts ~= 1 then
 					error("FOUND #ts ~= 1: ".. #ts)
-				else
-					local t = ts[1]
-					local edge = t:getEdgeForVtxs(va,vb)
-					local len = (vb.pos - va.pos):length()
+				end
 					
-					if len > 1.5 then 
-						
-						-- notice this is destructive
-						-- it adds a new vtx midway through edge
-						-- removes edge
-						-- removes all tris that reference edge
-						-- and replaces each with two tris that instead use the new vtx
-						local vn, ea, eb, newts = edge:split() 
-						assert(#newts == 2)
-						--newts[1].color = {0,1,0}
-						--newts[2].color = {1,0,1}
-						newts[1].color = t.color
-						newts[2].color = t.color
-						vn.R = (va.R + vb.R) * .5
-						slice:insert(i, vn)
+				local t = ts[1]
+				local edge = t:getEdgeForVtxs(va,vb)
+				local len = (vb.pos - va.pos):length()
+				
+				if len > splitLength then 
+					
+					-- notice this is destructive
+					-- it adds a new vtx midway through edge
+					-- removes edge
+					-- removes all tris that reference edge
+					-- and replaces each with two tris that instead use the new vtx
+					local vn = edge:split() 
+					vn.R = (va.R + vb.R) * .5
+					slice:insert(i, vn)
+				end
+			end
+			--]]
+			-- [[ same as above, except without adding it to 'slice'
+			for _,t in ipairs(tab) do
+				for _,e in ipairs(t.edges) do
+					if not slice:find(e) and not pslice:find(e) then
+						local va,vb = e.vtxs:unpack()
+						local edge = t:getEdgeForVtxs(va,vb)
+						local len = (vb.pos - va.pos):length()
+						if len > splitLength then 
+							local vn = edge:split() 
+							vn.R = (va.R + vb.R) * .5
+						end
+					end
+				end
+			end
+			--]]
+			-- [[ now apply Delaunay triangulation to make the mesh look better
+			for i=#edges,1,-1 do
+				local e = edges[i]
+				assert(#e.tris <= 2)
+				if #e.tris == 2 then
+					local a,b = e.vtxs:unpack()
+					local ta,tb = e.tris:unpack()
+					local c = ta:get3rdVtx(a,b)
+					local d = tb:get3rdVtx(a,b)
+					local tha = ta:angleForVertex(c)
+					local thb = tb:angleForVertex(d)
+					local th = tha + thb
+					if th >= math.pi then
+						--[=[ remove and replace
+						-- but this messes up the colors ...
+						e:remove()
+						ta:remove()
+						tb:remove()
+						maketri(c,a,d).color = ta.color
+						maketri(d,b,c).color = tb.color
+						--maketri(a,c,b)
+						--maketri(b,d,a)
+						--]=]
+						-- [=[ split
+						local vn = e:split()
+						vn.R = (a.R + b.R) * .5
+						--]=]
 					end
 				end
 			end
