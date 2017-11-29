@@ -130,7 +130,7 @@ function App:init()
 		for i=1,slicesize do
 			local v = makevtx(vtxpos(i,z))
 			local theta = math.atan2(v.pos[2], v.pos[1])
-			v.R = -.3	 --math.abs(theta) < (2 * math.pi / slicesize) and .1 or -.1
+			v.R = -.2	 --math.abs(theta) < (2 * math.pi / slicesize) and .1 or -.1
 			slice:insert(v)
 		end
 		return slice
@@ -279,7 +279,11 @@ function App:init()
 	end
 --]==]
 -- [==[ grow a new slice from the old, then minimize discrete curvature
-	for i=1,11 do
+	local maxiters = 9
+	local colorForIter = range(maxiters):map(function() 
+		return vec3(math.random(), math.random(), math.random()):normalize()
+	end)
+	for i=1,maxiters do
 		local pslice = slices[i-1]
 		local slice
 		if i > 2 then
@@ -292,6 +296,12 @@ function App:init()
 	
 		if i >= 2 then
 			local ta, tb = fuseslices(pslice, slice)
+			for _,t in ipairs(ta) do
+				t.color = colorForIter[i]
+			end
+			for _,t in ipairs(tb) do
+				t.color = colorForIter[i]
+			end
 			if i >= 3 then
 				convergeSlice(slice, pslice)
 			end
@@ -304,15 +314,12 @@ function App:init()
 				local ts = va:getTrisByVtx(vb)
 				if #ts ~= 1 then
 					error("FOUND #ts ~= 1: ".. #ts)
-					va.color = {1,0,0}
-					vb.color = {1,0,0}
 				else
-					assert(#ts == 1)
 					local t = ts[1]
 					local edge = t:getEdgeForVtxs(va,vb)
 					local len = (vb.pos - va.pos):length()
 					
-					if len > 1.2 then 
+					if len > 1.5 then 
 						
 						-- notice this is destructive
 						-- it adds a new vtx midway through edge
@@ -321,8 +328,10 @@ function App:init()
 						-- and replaces each with two tris that instead use the new vtx
 						local vn, ea, eb, newts = edge:split() 
 						assert(#newts == 2)
-						newts[1].color = {0,1,0}
-						newts[2].color = {1,0,1}
+						--newts[1].color = {0,1,0}
+						--newts[2].color = {1,0,1}
+						newts[1].color = t.color
+						newts[2].color = t.color
 						vn.R = (va.R + vb.R) * .5
 						slice:insert(i, vn)
 					end
@@ -386,7 +395,6 @@ function App:initGL()
 end
 
 function App:update()
-	App.super.update(self)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
 gl.glEnable(gl.GL_LIGHT0)
@@ -466,14 +474,16 @@ gl.glEnable(gl.GL_COLOR_MATERIAL)
 	gl.glDisable(gl.GL_LIGHTING)
 	gl.glDisable(gl.GL_BLEND)
 	gl.glEnable(gl.GL_DEPTH_TEST)
+	
+	App.super.update(self)
 end
 
 drawVertexes = ffi.new('bool[1]', true)
 drawEdges = ffi.new('bool[1]', true)
 drawTriangles = ffi.new('bool[1]', true)
-drawNormals = ffi.new('bool[1]', true)
-useLighting = ffi.new('bool[1]', true)
-useBlend = ffi.new('bool[1]', true)
+drawNormals = ffi.new('bool[1]', false)
+useLighting = ffi.new('bool[1]', false)
+useBlend = ffi.new('bool[1]', false)
 function App:updateGUI()
 	ig.igCheckbox('vertexes', drawVertexes)
 	ig.igCheckbox('edges', drawEdges)
