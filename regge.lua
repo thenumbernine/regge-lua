@@ -6,7 +6,7 @@ local ImGuiApp = require 'imguiapp'
 local gl = require 'gl'
 local ig = require 'ffi.imgui'
 local bit = bit32 or require 'bit'
-local vec4f = require 'ffi.vec.vec4f'
+local vec4f = require 'vec-ffi.vec4f'
 
 local View = require 'glapp.view'
 local Orbit = require 'glapp.orbit'
