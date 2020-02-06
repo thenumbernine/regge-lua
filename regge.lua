@@ -2,18 +2,14 @@
 require 'ext'
 require 'vec'
 local ffi = require 'ffi'
-local ImGuiApp = require 'imguiapp'
 local gl = require 'gl'
 local ig = require 'ffi.imgui'
 local bit = bit32 or require 'bit'
 local vec4f = require 'vec-ffi.vec4f'
 
-local View = require 'glapp.view'
-local Orbit = require 'glapp.orbit'
-
 require 'graph'
 
-local App = class(Orbit(View.apply(ImGuiApp)))
+local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'Regge calculus demo'
 App.viewDist = 2
@@ -441,10 +437,10 @@ function App:update()
 gl.glEnable(gl.GL_LIGHT0)
 gl.glLightModelf(gl.GL_LIGHT_MODEL_LOCAL_VIEWER, gl.GL_FALSE)
 gl.glLightModelf(gl.GL_LIGHT_MODEL_TWO_SIDE, gl.GL_FALSE)
-gl.glLightModelfv(gl.GL_LIGHT_MODEL_AMBIENT, vec4f(0,0,0,0):ptr())
-gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, vec4f(0,0,0,1):ptr())
-gl.glLightfv(gl.GL_LIGHT0, gl.GL_AMBIENT, vec4f(.3,.3,.3,1):ptr())
-gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, vec4f(1,1,1,1):ptr())
+gl.glLightModelfv(gl.GL_LIGHT_MODEL_AMBIENT, vec4f(0,0,0,0).s)
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, vec4f(0,0,0,1).s)
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_AMBIENT, vec4f(.3,.3,.3,1).s)
+gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, vec4f(1,1,1,1).s)
 gl.glColorMaterial(gl.GL_FRONT_AND_BACK, gl.GL_DIFFUSE)
 gl.glEnable(gl.GL_COLOR_MATERIAL)
 
