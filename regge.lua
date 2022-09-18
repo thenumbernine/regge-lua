@@ -1,15 +1,14 @@
 #!/usr/bin/env luajit
 require 'ext'
 require 'vec'
-local ffi = require 'ffi'
 local gl = require 'gl'
-local ig = require 'ffi.imgui'
+local ig = require 'imgui'
 local bit = bit32 or require 'bit'
 local vec4f = require 'vec-ffi.vec4f'
 
 require 'graph'
 
-local App = class(require 'glapp.orbit'(require 'imguiapp'))
+local App = require 'imguiapp.withorbit'()
 
 App.title = 'Regge calculus demo'
 App.viewDist = 2
@@ -444,7 +443,7 @@ gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, vec4f(1,1,1,1).s)
 gl.glColorMaterial(gl.GL_FRONT_AND_BACK, gl.GL_DIFFUSE)
 gl.glEnable(gl.GL_COLOR_MATERIAL)
 
-	if drawVertexes[0] then
+	if drawVertexes then
 		gl.glColor3f(1,1,1)
 		gl.glPointSize(3)
 		gl.glBegin(gl.GL_POINTS)
@@ -459,7 +458,7 @@ gl.glEnable(gl.GL_COLOR_MATERIAL)
 		gl.glEnd()
 	end
 
-	if drawEdges[0] then
+	if drawEdges then
 		gl.glColor3f(1,1,0)
 		gl.glBegin(gl.GL_LINES)
 		for _,e in ipairs(edges) do
@@ -470,7 +469,7 @@ gl.glEnable(gl.GL_COLOR_MATERIAL)
 		gl.glEnd()
 	end
 
-	if drawNormals[0] then
+	if drawNormals then
 		gl.glColor3f(1,0,1)
 		gl.glBegin(gl.GL_LINES)
 		for _,t in ipairs(tris) do
@@ -482,16 +481,16 @@ gl.glEnable(gl.GL_COLOR_MATERIAL)
 		gl.glEnd()
 	end
 
-	if useBlend[0] then
+	if useBlend then
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
 		gl.glEnable(gl.GL_BLEND)
 		gl.glDisable(gl.GL_DEPTH_TEST)
 	end
 	local alpha = 1
-	if useLighting[0] then 
+	if useLighting then 
 		gl.glEnable(gl.GL_LIGHTING)
 	end
-	if drawTriangles[0] then
+	if drawTriangles then
 		gl.glBegin(gl.GL_TRIANGLES)
 		for _,t in ipairs(tris) do
 			if t.color then
@@ -515,19 +514,19 @@ gl.glEnable(gl.GL_COLOR_MATERIAL)
 	App.super.update(self)
 end
 
-drawVertexes = ffi.new('bool[1]', true)
-drawEdges = ffi.new('bool[1]', true)
-drawTriangles = ffi.new('bool[1]', true)
-drawNormals = ffi.new('bool[1]', false)
-useLighting = ffi.new('bool[1]', false)
-useBlend = ffi.new('bool[1]', false)
+drawVertexes = true
+drawEdges = true
+drawTriangles = true
+drawNormals = false
+useLighting = false
+useBlend = false
 function App:updateGUI()
-	ig.igCheckbox('vertexes', drawVertexes)
-	ig.igCheckbox('edges', drawEdges)
-	ig.igCheckbox('triangles', drawTriangles)
-	ig.igCheckbox('normals', drawNormals)
-	ig.igCheckbox('light', useLighting)
-	ig.igCheckbox('transparent', useBlend)
+	ig.luatableCheckbox('vertexes', _G, 'drawVertexes')
+	ig.luatableCheckbox('edges', _G, 'drawEdges')
+	ig.luatableCheckbox('triangles', _G, 'drawTriangles')
+	ig.luatableCheckbox('normals', _G, 'drawNormals')
+	ig.luatableCheckbox('light', _G, 'useLighting')
+	ig.luatableCheckbox('transparent', _G, 'useBlend')
 end
 
 App():run()
