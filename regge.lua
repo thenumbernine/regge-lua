@@ -529,4 +529,4 @@ function App:updateGUI()
 	ig.luatableCheckbox('transparent', _G, 'useBlend')
 end
 
-App():run()
+return App():run()
