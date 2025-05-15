@@ -3,12 +3,11 @@ require 'ext'
 require 'vec'
 local gl = require 'gl'
 local ig = require 'imgui'
-local bit = bit32 or require 'bit'
 local vec4f = require 'vec-ffi.vec4f'
 
 require 'graph'
 
-local App = require 'imguiapp.withorbit'()
+local App = require 'imgui.appwithorbit'()
 
 App.title = 'Regge calculus demo'
 App.viewDist = 2
